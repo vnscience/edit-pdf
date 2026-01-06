@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro PDF Editor</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Libraries -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://unpkg.com/@pdf-lib/fontkit@0.0.4/dist/fontkit.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';</script>
+    <script src="https://unpkg.com/interactjs/dist/interact.min.js"></script>
+
+    <style>
+        body { background-color: #e5e7eb; }
+        #workspace-container {
+             background-color: #525659;
+             min-height: calc(100vh - 110px);
+             display: flex;
+             justify-content: center;
+             align-items: center;
+             padding: 20px;
+             overflow: auto;
+        }
+        #workspace {
+            position: relative;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            background-color: white;
+        }
+        #layer-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; overflow: hidden;
+            pointer-events: none; 
+        }
+        .draggable-item {
+            position: absolute; cursor: move; user-select: none; box-sizing: border-box; touch-action: none;
+            pointer-events: auto; transform-origin: center center;
+        }
+        .draggable-item.is-selected {
+            outline: 2px dashed #3b82f6; background-color: rgba(59, 130, 246, 0.1);
+        }
+        .text-element {
+            white-space: nowrap; padding: 4px 8px; border: 1px solid transparent; min-width: 20px;
+        }
+        .text-element:focus { outline: none; border-color: #3b82f6; background: rgba(255,255,255,0.8); }
+        .img-element { background-size: cover; background-repeat: no-repeat; }
+        
+        #properties-toolbar {
+            position: fixed; top: 120px; right: 20px;
+            background: white; padding: 15px; border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 100; display: none; width: 250px;
+        }
+        .tool-input { width: 100%; border: 1px solid #ddd; padding: 6px; border-radius: 4px; }
+        
+        .pagination-bar {
+            background: #333; color: white; padding: 8px; display: flex; justify-content: center; align-items: center; gap: 15px;
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col font-sans">
+
+    <!-- MAIN HEADER -->
+    <div class="bg-white shadow-md h-16 px-4 flex justify-between items-center z-20 relative">
+        <h1 class="text-xl font-bold text-gray-800 flex items-center">
+            <i class="fas fa-file-pdf text-red-600 mr-2"></i> PDF Editor <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded ml-2">v2.1 Stable</span>
+        </h1>
+        
+        <div class="flex gap-3 items-center">
+            <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded flex items-center transition shadow">
+                <i class="fas fa-upload mr-2"></i> Mở PDF
+                <input type="file" id="inpPdf" accept="application/pdf" class="hidden">
+            </label>
+
+            <div class="h-8 w-px bg-gray-300 mx-2"></div>
+
+            <button onclick="addTextLayer()" id="btnAddText" disabled class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded disabled:opacity-50 transition">
+                <i class="fas fa-font mr-2"></i> Thêm Chữ
+            </button>
+            <label id="btnAddImgLabel" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded cursor-pointer disabled:opacity-50 transition" style="opacity: 0.5; pointer-events: none;">
+                <i class="fas fa-image mr-2"></i> Thêm Ảnh
+                <input type="file" id="inpImg" accept="image/png, image/jpeg" class="hidden" disabled>
+            </label>
+
+            <div class="h-8 w-px bg-gray-300 mx-2"></div>
+
+            <button onclick="savePDF()" id="btnSave" disabled class="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded font-bold shadow disabled:opacity-50 transition">
+                <i class="fas fa-download mr-2"></i> Xuất File
+            </button>
+        </div>
+    </div>
+
+    <!-- PAGINATION BAR -->
+    <div class="pagination-bar" id="paginationBar" style="display:none;">
+        <button onclick="changePage(-1)" class="hover:text-blue-300 disabled:text-gray-500" id="btnPrevPage"><i class="fas fa-chevron-left"></i> Trước</button>
+        <span class="font-mono">Trang <span id="pageNumDisplay">1</span> / <span id="pageTotalDisplay">--</span></span>
+        <button onclick="changePage(1)" class="hover:text-blue-300 disabled:text-gray-500" id="btnNextPage">Sau <i class="fas fa-chevron-right"></i></button>
+    </div>
+
+    <!-- PROPERTIES TOOLBAR -->
+    <div id="properties-toolbar">
+        <h3 class="font-bold text-gray-700 mb-3 border-b pb-2">Thuộc tính</h3>
+        <div id="text-tools">
+            <div class="mb-2">
+                 <span class="text-xs text-gray-500 block mb-1">Font chữ</span>
+                 <select id="fontFamilySel" class="tool-input text-sm">
+                     <option value="Roboto">Roboto (Tiếng Việt)</option>
+                     <option value="Times New Roman">Times New Roman</option>
+                     <option value="Arial">Arial (System)</option> 
+                 </select>
+            </div>
+            <div class="flex gap-2 mb-2">
+                <div class="flex-1">
+                    <span class="text-xs text-gray-500 block mb-1">Cỡ (px)</span>
+                    <input type="number" id="fontSizeInp" class="tool-input" min="8" max="100" value="24">
+                </div>
+                <div class="flex-1">
+                    <span class="text-xs text-gray-500 block mb-1">Màu</span>
+                    <input type="color" id="fontColorInp" class="tool-input h-[34px] p-0 border-0" value="#ff0000">
+                </div>
+            </div>
+        </div>
+        <div class="mt-3 pt-3 border-t">
+            <span class="text-xs text-gray-500 flex justify-between mb-1">Góc xoay: <span id="rotationValue">0°</span></span>
+            <input type="range" id="rotationInp" class="w-full" min="-180" max="180" value="0">
+        </div>
+        <button id="btnDeleteElem" class="w-full bg-red-50 text-red-600 hover:bg-red-100 mt-4 py-2 rounded text-sm font-semibold transition">
+            <i class="fas fa-trash-alt mr-1"></i> Xóa
+        </button>
+    </div>
+
+    <!-- WORKSPACE -->
+    <div id="workspace-container">
+        <div id="workspace">
+            <canvas id="the-canvas" class="block"></canvas>
+            <div id="layer-overlay"></div>
+        </div>
+    </div>
+
+<script>
+    // --- 0. CONFIG & GLOBALS ---
+    const { PDFDocument, rgb, degrees, StandardFonts } = PDFLib;
+    
+    let pdfDoc = null;          
+    let pdfFileBytes = null;    
+    let pageScale = 1.0;
+    
+    // Multi-page State Management
+    let currentPage = 1;
+    let totalPages = 0;
+    let pageDataMap = {}; 
+
+    // Font Loading State
+    let fontBuffers = {};
+    const fontUrls = {
+        'RobotoReal': 'https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu72xKOzY.woff2',
+        'Times New Roman': 'https://db.onlinewebfonts.com/t/3333c00a129c082fb6581d674939e296.ttf'
+    };
+
+    const workspace = document.getElementById('workspace');
+    const overlay = document.getElementById('layer-overlay');
+    const toolbar = document.getElementById('properties-toolbar');
+    
+    // --- 1. LOAD FONTS ---
+    async function loadFonts() {
+        if (window.fontkit) PDFLib.fontkit = window.fontkit;
+        try {
+            console.log("Đang tải font...");
+            const robotoFetch = await fetch(fontUrls['RobotoReal']);
+            if (!robotoFetch.ok) throw new Error("Load Roboto Failed");
+            fontBuffers['Roboto'] = await robotoFetch.arrayBuffer();
+            try {
+                const timesFetch = await fetch(fontUrls['Times New Roman']);
+                if (timesFetch.ok) fontBuffers['Times New Roman'] = await timesFetch.arrayBuffer();
+            } catch(e) {}
+            console.log("Font loaded OK");
+        } catch (e) {
+            console.error(e);
+            alert("Lỗi tải Font. Hãy kiểm tra mạng.");
+        }
+    }
+    loadFonts();
+
+    // --- 2. FILE UPLOAD & INIT ---
+    document.getElementById('inpPdf').addEventListener('change', async function(e) {
+        const file = e.target.files[0];
+        if(!file) return;
+        pdfFileBytes = await file.arrayBuffer();
+        const loadingTask = pdfjsLib.getDocument(pdfFileBytes);
+        pdfDoc = await loadingTask.promise;
+        totalPages = pdfDoc.numPages;
+        currentPage = 1;
+        pageDataMap = {}; 
+        setupUI();
+        renderPage(currentPage);
+    });
+
+    function setupUI() {
+        document.getElementById('paginationBar').style.display = 'flex';
+        document.getElementById('btnAddText').disabled = false;
+        document.getElementById('inpImg').disabled = false;
+        document.getElementById('btnAddImgLabel').style.opacity = '1';
+        document.getElementById('btnAddImgLabel').style.pointerEvents = 'auto';
+        document.getElementById('btnSave').disabled = false;
+        updatePaginationDisplay();
+    }
+
+    // --- 3. RENDERING & PAGINATION ---
+    async function renderPage(num) {
+        const page = await pdfDoc.getPage(num);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.getElementById('the-canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        
+        const defaultViewport = page.getViewport({ scale: 1.0 });
+        pageScale = viewport.width / defaultViewport.width;
+        
+        workspace.style.width = `${viewport.width}px`;
+        workspace.style.height = `${viewport.height}px`;
+
+        await page.render({ canvasContext: context, viewport: viewport }).promise;
+        restorePageItems(num);
+    }
+
+    function changePage(delta) {
+        const newPage = currentPage + delta;
+        if(newPage < 1 || newPage > totalPages) return;
+        saveCurrentPageStateToMemory();
+        currentPage = newPage;
+        updatePaginationDisplay();
+        renderPage(currentPage);
+    }
+
+    function updatePaginationDisplay() {
+        document.getElementById('pageNumDisplay').innerText = currentPage;
+        document.getElementById('pageTotalDisplay').innerText = totalPages;
+        document.getElementById('btnPrevPage').disabled = currentPage <= 1;
+        document.getElementById('btnNextPage').disabled = currentPage >= totalPages;
+    }
+
+    // --- 4. STATE MANAGEMENT ---
+    function saveCurrentPageStateToMemory() {
+        const items = [];
+        Array.from(overlay.children).forEach(el => {
+            // Lấy offsetWidth nếu style.width chưa có (tránh lỗi NaN)
+            const widthStr = el.style.width || (el.offsetWidth + 'px');
+            const heightStr = el.style.height || (el.offsetHeight + 'px');
+
+            items.push({
+                type: el.dataset.type,
+                // Fallback về 0 nếu chưa có tọa độ
+                x: parseFloat(el.dataset.x) || 0,
+                y: parseFloat(el.dataset.y) || 0,
+                w: widthStr,
+                h: heightStr,
+                rotation: el.dataset.rotation || 0,
+                text: el.innerText,
+                fontFamily: el.dataset.fontFamily,
+                fontSize: el.dataset.fontSize,
+                color: el.dataset.color,
+                imgData: el.dataset.imgData
+            });
+        });
+        pageDataMap[currentPage] = items;
+    }
+
+    function restorePageItems(pageNum) {
+        overlay.innerHTML = '';
+        selectedElement = null;
+        updateToolbarVisibility();
+
+        const items = pageDataMap[pageNum] || [];
+        items.forEach(data => {
+            const div = document.createElement('div');
+            div.className = `draggable-item ${data.type === 'text' ? 'text-element' : 'img-element'}`;
+            
+            div.dataset.type = data.type;
+            div.dataset.x = data.x;
+            div.dataset.y = data.y;
+            div.dataset.rotation = data.rotation;
+            
+            div.style.width = data.w;
+            div.style.height = data.h;
+            div.style.transform = `translate(${data.x}px, ${data.y}px) rotate(${data.rotation}deg)`;
+            div.style.left = '0px'; div.style.top = '0px';
+
+            if(data.type === 'text') {
+                div.contentEditable = true;
+                div.innerText = data.text;
+                div.dataset.fontFamily = data.fontFamily;
+                div.dataset.fontSize = data.fontSize;
+                div.dataset.color = data.color;
+                
+                div.style.fontFamily = data.fontFamily === 'Arial' ? 'Arial, sans-serif' : `'${data.fontFamily}', sans-serif`;
+                div.style.fontSize = `${data.fontSize}px`;
+                div.style.color = data.color;
+
+                div.addEventListener('blur', function() { this.dataset.textContent = this.innerText; });
+            } else {
+                div.style.backgroundImage = `url('${data.imgData}')`;
+                div.dataset.imgData = data.imgData;
+            }
+
+            div.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectElement(div);
+            });
+
+            overlay.appendChild(div);
+        });
+    }
+
+    // --- 5. ADD ELEMENTS ---
+    function createNewElement(type, extraData = {}) {
+        const div = document.createElement('div');
+        div.className = `draggable-item ${type === 'text' ? 'text-element' : 'img-element'}`;
+        
+        div.dataset.type = type;
+        div.dataset.x = 50; div.dataset.y = 50; div.dataset.rotation = 0;
+        div.style.transform = `translate(50px, 50px) rotate(0deg)`;
+        div.style.left = '0px'; div.style.top = '0px';
+
+        if(type === 'text') {
+            div.contentEditable = true;
+            div.innerText = 'Chữ mới';
+            div.dataset.fontFamily = 'Roboto'; div.style.fontFamily = "'Roboto', sans-serif";
+            div.dataset.fontSize = 24; div.style.fontSize = '24px';
+            div.dataset.color = '#ff0000'; div.style.color = '#ff0000';
+            
+            div.addEventListener('blur', function() { this.dataset.textContent = this.innerText; });
+        } else {
+            div.style.backgroundImage = `url('${extraData.src}')`;
+            div.dataset.imgData = extraData.src;
+            div.style.width = extraData.w;
+            div.style.height = extraData.h;
+        }
+
+        div.addEventListener('click', (e) => { e.stopPropagation(); selectElement(div); });
+        overlay.appendChild(div);
+        selectElement(div);
+    }
+
+    function addTextLayer() { createNewElement('text'); }
+
+    document.getElementById('inpImg').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            const img = new Image();
+            img.onload = function() {
+                const aspect = img.height / img.width;
+                createNewElement('image', { src: event.target.result, w: '200px', h: `${200*aspect}px` });
+            }
+            img.src = event.target.result;
+        }
+        reader.readAsDataURL(file);
+        e.target.value = '';
+    });
+
+    // --- 6. INTERACT.JS ---
+    interact('.draggable-item').draggable({
+        listeners: { move(event) {
+            const target = event.target;
+            const x = (parseFloat(target.dataset.x) || 0) + event.dx;
+            const y = (parseFloat(target.dataset.y) || 0) + event.dy;
+            updateTransform(target, x, y, target.dataset.rotation);
+        }}
+    }).resizable({
+        edges: { left: true, right: true, bottom: true, top: true },
+        listeners: { move: function (event) {
+            const target = event.target;
+            let x = parseFloat(target.dataset.x) || 0;
+            let y = parseFloat(target.dataset.y) || 0;
+            x += event.deltaRect.left; y += event.deltaRect.top;
+            target.style.width = `${event.rect.width}px`; target.style.height = `${event.rect.height}px`;
+            updateTransform(target, x, y, target.dataset.rotation);
+        }}
+    });
+
+    function updateTransform(el, x, y, rotation) {
+        el.style.transform = `translate(${x}px, ${y}px) rotate(${rotation}deg)`;
+        el.dataset.x = x; el.dataset.y = y;
+    }
+
+    // --- 7. TOOLBAR ---
+    workspace.addEventListener('click', () => {
+        if(selectedElement) selectedElement.classList.remove('is-selected');
+        selectedElement = null; updateToolbarVisibility();
+    });
+
+    function selectElement(el) {
+        if(selectedElement) selectedElement.classList.remove('is-selected');
+        selectedElement = el; selectedElement.classList.add('is-selected');
+        updateToolbarVisibility(); syncToolbarValues(el);
+    }
+
+    function updateToolbarVisibility() {
+        const tools = document.getElementById('text-tools');
+        if (selectedElement) {
+            toolbar.style.display = 'block';
+            tools.style.display = selectedElement.dataset.type === 'text' ? 'block' : 'none';
+        } else toolbar.style.display = 'none';
+    }
+
+    function syncToolbarValues(el) {
+        document.getElementById('rotationInp').value = el.dataset.rotation || 0;
+        document.getElementById('rotationValue').innerText = (el.dataset.rotation || 0) + '°';
+        if (el.dataset.type === 'text') {
+            document.getElementById('fontFamilySel').value = el.dataset.fontFamily;
+            document.getElementById('fontSizeInp').value = el.dataset.fontSize;
+            document.getElementById('fontColorInp').value = el.dataset.color;
+        }
+    }
+
+    document.getElementById('rotationInp').addEventListener('input', (e) => {
+        if(!selectedElement) return;
+        const deg = e.target.value;
+        selectedElement.dataset.rotation = deg;
+        document.getElementById('rotationValue').innerText = deg + '°';
+        updateTransform(selectedElement, selectedElement.dataset.x, selectedElement.dataset.y, deg);
+    });
+    
+    ['fontFamilySel', 'fontSizeInp', 'fontColorInp'].forEach(id => {
+        document.getElementById(id).addEventListener('input', () => {
+            if(!selectedElement || selectedElement.dataset.type !== 'text') return;
+            const fam = document.getElementById('fontFamilySel').value;
+            const size = document.getElementById('fontSizeInp').value;
+            const col = document.getElementById('fontColorInp').value;
+            
+            selectedElement.style.fontFamily = fam === 'Arial' ? 'Arial, sans-serif' : `'${fam}', sans-serif`;
+            selectedElement.style.fontSize = `${size}px`;
+            selectedElement.style.color = col;
+            
+            selectedElement.dataset.fontFamily = fam;
+            selectedElement.dataset.fontSize = size;
+            selectedElement.dataset.color = col;
+        });
+    });
+
+    document.getElementById('btnDeleteElem').addEventListener('click', () => {
+        if(selectedElement) { selectedElement.remove(); selectedElement = null; updateToolbarVisibility(); }
+    });
+
+    // --- 8. SAVE PDF ---
+    async function savePDF() {
+        if(!pdfFileBytes) return;
+        saveCurrentPageStateToMemory(); // Lưu trang hiện tại
+
+        try {
+            const pdfDoc = await PDFDocument.load(pdfFileBytes);
+            pdfDoc.registerFontkit(window.fontkit);
+
+            const fontMap = {};
+            fontMap['Arial'] = await pdfDoc.embedFont(StandardFonts.Helvetica);
+            
+            if(fontBuffers['Roboto']) {
+                fontMap['Roboto'] = await pdfDoc.embedFont(fontBuffers['Roboto'], { subset: true });
+            } else {
+                fontMap['Roboto'] = fontMap['Arial'];
+            }
+            if(fontBuffers['Times New Roman']) {
+                fontMap['Times New Roman'] = await pdfDoc.embedFont(fontBuffers['Times New Roman'], { subset: true });
+            }
+
+            const pages = pdfDoc.getPages();
+            const scaleFactor = 1 / pageScale; 
+
+            for (let i = 0; i < pages.length; i++) {
+                const pageNum = i + 1;
+                const items = pageDataMap[pageNum]; 
+                
+                if (!items || items.length === 0) continue; 
+
+                const page = pages[i];
+                const { height: pdfPageHeight } = page.getSize();
+
+                for(let item of items) {
+                    // Đảm bảo luôn là số (number) tránh NaN
+                    const pixelX = parseFloat(item.x) || 0;
+                    const pixelY = parseFloat(item.y) || 0;
+                    const pixelW = parseFloat(item.w) || 0; 
+                    const pixelH = parseFloat(item.h) || 0;
+                    const rotation = parseFloat(item.rotation || 0);
+
+                    const centerX = pixelX + pixelW / 2;
+                    const centerY = pixelY + pixelH / 2;
+                    const pdfCenterX = centerX * scaleFactor;
+                    const pdfCenterY = pdfPageHeight - (centerY * scaleFactor);
+
+                    // Nếu tính ra NaN (dù đã fallback) thì bỏ qua item này
+                    if (isNaN(pdfCenterX) || isNaN(pdfCenterY)) continue;
+
+                    const commonOptions = {
+                        rotate: degrees(rotation),
+                        x: pdfCenterX,
+                        y: pdfCenterY,
+                    };
+
+                    if (item.type === 'text') {
+                        const fontSize = parseFloat(item.fontSize) * scaleFactor;
+                        let font = fontMap[item.fontFamily] || fontMap['Arial'];
+                        
+                        let textWidth = 0, textHeight = 0;
+                        try {
+                            textWidth = font.widthOfTextAtSize(item.text, fontSize);
+                            textHeight = font.heightAtSize(fontSize, { descender: false });
+                        } catch(e) {}
+
+                        const colorHex = item.color;
+                        const r = parseInt(colorHex.slice(1, 3), 16) / 255;
+                        const g = parseInt(colorHex.slice(3, 5), 16) / 255;
+                        const b = parseInt(colorHex.slice(5, 7), 16) / 255;
+
+                        page.drawText(item.text, {
+                            ...commonOptions,
+                            x: pdfCenterX - (textWidth / 2),
+                            y: pdfCenterY - (textHeight / 2),
+                            size: fontSize,
+                            font: font,
+                            color: rgb(r, g, b),
+                        });
+                    } 
+                    else if (item.type === 'image') {
+                        let embeddedImage;
+                        if (item.imgData.includes('image/png')) embeddedImage = await pdfDoc.embedPng(item.imgData);
+                        else embeddedImage = await pdfDoc.embedJpg(item.imgData);
+
+                        const pdfImgW = pixelW * scaleFactor;
+                        const pdfImgH = pixelH * scaleFactor;
+
+                        page.drawImage(embeddedImage, {
+                            ...commonOptions,
+                            x: pdfCenterX - (pdfImgW / 2),
+                            y: pdfCenterY - (pdfImgH / 2),
+                            width: pdfImgW,
+                            height: pdfImgH,
+                        });
+                    }
+                }
+            }
+
+            const modifiedPdfBytes = await pdfDoc.save();
+            download(modifiedPdfBytes, "final_fixed.pdf", "application/pdf");
+
+        } catch (err) {
+            console.error(err);
+            alert("Lỗi khi lưu file: " + err.message);
+        }
+    }
+
+    function download(data, filename, type) {
+        const file = new Blob([data], {type: type});
+        const a = document.createElement("a");
+        const url = URL.createObjectURL(file);
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 0); 
+    }
+</script>
+</body>
+</html>
